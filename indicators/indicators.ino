@@ -86,7 +86,7 @@ void loop() {
       }
     }
 
-    if (song_pos >= PPBN) song_pos /= PPBN;
+    if (song_pos >= PPBN) song_pos %= PPBN;
   } while (rx.header != 0);
 
   indicate(song_pos / PPQN);
