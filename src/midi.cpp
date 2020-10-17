@@ -15,7 +15,6 @@
 int song_pos = 0;
 bool playing = false;
 
-TaskHandle_t blink;
 TaskHandle_t endTrig;
 
 void indicate_beat(int note)
@@ -56,13 +55,13 @@ void EndTrig(void *pvParameters)
 void continue_play()
 {
   playing = true;
-  vTaskSuspend(blink);
+  stop_blink(BEAT);
 }
 
 void pause_play()
 {
   playing = false;
-  vTaskResume(blink);
+  start_blink(BEAT, 600, 300);
 }
 
 void TaskRcvMidi(void *pvParameters)
@@ -114,34 +113,16 @@ void TaskRcvMidi(void *pvParameters)
   };
 }
 
-void Blink(void *pvParameters)
-{
-  for (;;)
-  {
-    display_num(BEAT, 0, 0);
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-    indicate_current();
-    vTaskDelay(900 / portTICK_PERIOD_MS);
-  }
-}
-
 void setup_midi()
 {
   pinMode(TRIG_PIN, OUTPUT);
 
   xTaskCreate(TaskRcvMidi,
               "RcvMidi",
-              128,
+              256,
               NULL,
               3,
               NULL);
-
-  xTaskCreate(Blink,
-              "Blink",
-              128,
-              NULL,
-              3,
-              &blink);
 
   xTaskCreate(EndTrig,
               "EndTrig",
