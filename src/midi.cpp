@@ -5,6 +5,7 @@
 #include <division.hpp>
 #include <queue.h>
 #include <timers.h>
+#include <movingAvgGen/movingAvg.h>
 
 #define MSG_CLOCK 0xF8
 #define MSG_START 0xFA
@@ -16,6 +17,9 @@
 
 int song_pos = 0;
 bool playing = false;
+movingAvg<float, double> bpm_avg(4);
+unsigned long prev_pulse = 0;
+int pulse_count = 0;
 
 QueueHandle_t midiQueue;
 TimerHandle_t endTriggerTimer;
@@ -74,9 +78,29 @@ void TaskHandleMidi(void *pvParameters)
       switch (rx.byte1)
       {
       case MSG_CLOCK:
+      {
         if (playing)
           song_pos++;
-        break;
+        unsigned long cur_pulse = micros();
+        if (prev_pulse == 0)
+        {
+          prev_pulse = cur_pulse;
+          pulse_count = 0;
+        }
+        else
+        {
+          pulse_count++;
+        }
+
+        if (pulse_count == 24)
+        {
+          float bpm = 60000000.0 / (cur_pulse - prev_pulse);
+          Serial.println(bpm_avg.reading(bpm));
+          prev_pulse = cur_pulse;
+          pulse_count = 0;
+        }
+      }
+      break;
       case MSG_START:
         song_pos = 0;
         continue_play();
@@ -124,8 +148,18 @@ void TaskRcvMidi(void *pvParameters)
   };
 }
 
+void TaskPrintBpm(void *pvParams)
+{
+  for (;;)
+  {
+    //Serial.println(pulse_duration.getAvg());
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+
 void setup_midi()
 {
+  bpm_avg.begin();
   midiQueue = xQueueCreate(16, sizeof(midiEventPacket_t));
   endTriggerTimer = xTimerCreate("Stop trigger",
                                  50 / portTICK_PERIOD_MS,
@@ -146,6 +180,13 @@ void setup_midi()
               "HandleMidi",
               128,
               NULL,
-              1,
+              3,
+              NULL);
+
+  xTaskCreate(TaskPrintBpm,
+              "TaskPrintBpm",
+              128,
+              NULL,
+              3,
               NULL);
 }
