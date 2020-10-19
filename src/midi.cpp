@@ -3,6 +3,7 @@
 #include <shared.hpp>
 #include <display.hpp>
 #include <division.hpp>
+#include <queue.h>
 
 #define MSG_CLOCK 0xF8
 #define MSG_START 0xFA
@@ -16,6 +17,7 @@ int song_pos = 0;
 bool playing = false;
 
 TaskHandle_t endTrig;
+QueueHandle_t midiQueue;
 
 void indicate_beat(int note)
 {
@@ -64,12 +66,12 @@ void pause_play()
   start_blink(BEAT, 600, 300);
 }
 
-void TaskRcvMidi(void *pvParameters)
+void TaskHandleMidi(void *pvParameters)
 {
   midiEventPacket_t rx;
   for (;;)
   {
-    rx = MidiUSB.read();
+    xQueueReceive(midiQueue, &rx, portMAX_DELAY);
 
     if (rx.header == 0xF)
     {
@@ -109,19 +111,41 @@ void TaskRcvMidi(void *pvParameters)
       indicate_current();
       trigger_current();
     }
+  };
+}
+
+void TaskRcvMidi(void *pvParameters)
+{
+  midiEventPacket_t rx;
+  for (;;)
+  {
+    rx = MidiUSB.read();
+    if (rx.header != 0)
+    {
+      xQueueSendToBack(midiQueue, (void *)&rx, 0);
+    }
     taskYIELD();
   };
 }
 
 void setup_midi()
 {
+  midiQueue = xQueueCreate(16, sizeof(midiEventPacket_t));
+
   pinMode(TRIG_PIN, OUTPUT);
 
   xTaskCreate(TaskRcvMidi,
               "RcvMidi",
-              256,
+              128,
               NULL,
-              3,
+              1,
+              NULL);
+
+  xTaskCreate(TaskHandleMidi,
+              "HandleMidi",
+              128,
+              NULL,
+              1,
               NULL);
 
   xTaskCreate(EndTrig,
