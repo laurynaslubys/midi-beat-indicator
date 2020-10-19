@@ -4,6 +4,7 @@
 #include <display.hpp>
 #include <division.hpp>
 #include <queue.h>
+#include <timers.h>
 
 #define MSG_CLOCK 0xF8
 #define MSG_START 0xFA
@@ -16,8 +17,13 @@
 int song_pos = 0;
 bool playing = false;
 
-TaskHandle_t endTrig;
 QueueHandle_t midiQueue;
+TimerHandle_t endTriggerTimer;
+
+void endTrigger(TimerHandle_t timer)
+{
+  digitalWrite(TRIG_PIN, LOW);
+}
 
 void indicate_beat(int note)
 {
@@ -39,18 +45,8 @@ void trigger_current()
     if (song_pos % current_division == 0)
     {
       digitalWrite(TRIG_PIN, HIGH);
-      vTaskResume(endTrig);
+      xTimerReset(endTriggerTimer, 1000 / portTICK_PERIOD_MS);
     }
-  }
-}
-
-void EndTrig(void *pvParameters)
-{
-  for (;;)
-  {
-    vTaskSuspend(NULL);
-    vTaskDelay(50 / portTICK_PERIOD_MS);
-    digitalWrite(TRIG_PIN, LOW);
   }
 }
 
@@ -131,6 +127,11 @@ void TaskRcvMidi(void *pvParameters)
 void setup_midi()
 {
   midiQueue = xQueueCreate(16, sizeof(midiEventPacket_t));
+  endTriggerTimer = xTimerCreate("Stop trigger",
+                                 50 / portTICK_PERIOD_MS,
+                                 false,
+                                 NULL,
+                                 endTrigger);
 
   pinMode(TRIG_PIN, OUTPUT);
 
@@ -147,11 +148,4 @@ void setup_midi()
               NULL,
               1,
               NULL);
-
-  xTaskCreate(EndTrig,
-              "EndTrig",
-              128,
-              NULL,
-              3,
-              &endTrig);
 }
