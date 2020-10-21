@@ -1,18 +1,28 @@
-#include "MIDIUSB.h"
+#include <usbmidi.h>
+#include <FastGPIO.h>
 #include <Arduino_FreeRTOS.h>
+#include <Arduino.h>
 #include <shared.hpp>
 #include <display.hpp>
 #include <division.hpp>
 #include <queue.h>
 #include <timers.h>
 
-#define MSG_CLOCK 0xF8
-#define MSG_START 0xFA
-#define MSG_CONTINUE 0xFB
-#define MSG_STOP 0xFC
-#define MSG_SPP 0xF2
+//https://www.midi.org/specifications-old/item/table-1-summary-of-midi-message
+#define MSG_CLOCK 0b11111000
+#define MSG_START 0b11111010
+#define MSG_CONTINUE 0b11111011
+#define MSG_STOP 0b11111100
+#define MSG_SPP 0b11110010
 
 #define TRIG_PIN 7
+
+struct MidiMessage
+{
+  int status = 0;
+  int data1 = 0;
+  int data2 = 0;
+};
 
 int song_pos = 0;
 bool playing = false;
@@ -22,7 +32,7 @@ TimerHandle_t endTriggerTimer;
 
 void endTrigger(TimerHandle_t timer)
 {
-  digitalWrite(TRIG_PIN, LOW);
+  FastGPIO::Pin<TRIG_PIN>::setOutputValueLow();
 }
 
 void indicate_beat(int note)
@@ -44,7 +54,7 @@ void trigger_current()
   {
     if (song_pos % current_division == 0)
     {
-      digitalWrite(TRIG_PIN, HIGH);
+      FastGPIO::Pin<TRIG_PIN>::setOutputValueHigh();
       xTimerReset(endTriggerTimer, 1000 / portTICK_PERIOD_MS);
     }
   }
@@ -64,76 +74,107 @@ void pause_play()
 
 void TaskHandleMidi(void *pvParameters)
 {
-  midiEventPacket_t rx;
+  MidiMessage rx;
   for (;;)
   {
     xQueueReceive(midiQueue, &rx, portMAX_DELAY);
 
-    if (rx.header == 0xF)
+    switch (rx.status)
     {
-      switch (rx.byte1)
-      {
-      case MSG_CLOCK:
-        if (playing)
-          song_pos++;
-        break;
-      case MSG_START:
-        song_pos = 0;
-        continue_play();
-        break;
-      case MSG_CONTINUE:
-        continue_play();
-        break;
-      case MSG_STOP:
-        pause_play();
-        break;
-      }
-    }
-    else if (rx.header == 0x3)
-    {
-      switch (rx.byte1)
-      {
-      case 0xF2:
-        song_pos = (rx.byte2 | (rx.byte3 << 7)) * PPQN / 4;
-        break;
-      }
+    case MSG_CLOCK:
+      if (playing)
+        song_pos++;
+      break;
+    case MSG_START:
+      song_pos = 0;
+      continue_play();
+      break;
+    case MSG_CONTINUE:
+      continue_play();
+      break;
+    case MSG_STOP:
+      pause_play();
+      break;
+    case MSG_SPP:
+      song_pos = (rx.data1 | (rx.data2 << 7)) * PPQN / 4;
+      break;
     }
 
     if (song_pos >= PPBN)
       song_pos %= PPBN;
-
     if (playing)
     {
       indicate_current();
       trigger_current();
     }
-  };
+  }
 }
 
 void TaskRcvMidi(void *pvParameters)
 {
-  midiEventPacket_t rx;
+  int data = 0;
+  int pending_bytes = 0;
+  MidiMessage current_message = {};
   for (;;)
   {
-    rx = MidiUSB.read();
-    if (rx.header != 0)
+    USBMIDI.poll();
+
+    while (USBMIDI.available())
     {
-      xQueueSendToBack(midiQueue, (void *)&rx, 0);
+      data = USBMIDI.read();
+      bool is_command = data & 0b10000000;
+
+      if (is_command)
+      {
+        pending_bytes = 0;
+      }
+
+      switch (pending_bytes)
+      {
+      case 2:
+        pending_bytes = 1;
+        current_message.data1 = data;
+        break;
+      case 1:
+        pending_bytes = 0;
+        current_message.data2 = data;
+        xQueueSendToBack(midiQueue, (void *)&current_message, 0);
+        break;
+      case 0:
+      {
+        switch (data)
+        {
+        case MSG_CLOCK:
+        case MSG_CONTINUE:
+        case MSG_START:
+        case MSG_STOP:
+          current_message.status = data;
+          xQueueSendToBack(midiQueue, (void *)&current_message, 0);
+          break;
+        case MSG_SPP:
+          current_message.status = data;
+          pending_bytes = 2;
+          break;
+        }
+        break;
+      }
+      }
     }
+
     taskYIELD();
   };
 }
 
 void setup_midi()
 {
-  midiQueue = xQueueCreate(16, sizeof(midiEventPacket_t));
+  midiQueue = xQueueCreate(16, sizeof(MidiMessage));
   endTriggerTimer = xTimerCreate("Stop trigger",
                                  50 / portTICK_PERIOD_MS,
                                  false,
                                  NULL,
                                  endTrigger);
 
-  pinMode(TRIG_PIN, OUTPUT);
+  FastGPIO::Pin<TRIG_PIN>::setOutputLow();
 
   xTaskCreate(TaskRcvMidi,
               "RcvMidi",
