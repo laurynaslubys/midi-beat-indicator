@@ -2,11 +2,7 @@
 #include <Arduino.h>
 #include <display.hpp>
 #include <Arduino_FreeRTOS.h>
-#include <queue.h>
-#include <timers.h>
-
-#define encoderPinA 2
-#define encoderPinB 3
+#include <wiring.h>
 
 const int division_values[] = {
     192, //TWO_BAR
@@ -23,30 +19,29 @@ const int division_values[] = {
     4,   //SIXTEENTH_TRIP,
 };
 
-int current_division_idx = 6;
-int current_division = division_values[current_division_idx];
-boolean enc_A_value = false;
-boolean enc_B_value = false;
-QueueHandle_t changeQueue;
-TimerHandle_t restoreDisplayTimer;
+int current_division = -1;
+int same_value_count = 0;
 
-#define LOW_TICKS (-42)
-#define HIGH_TICKS 30
-
-void handleEncoder(void *pvParam)
+void SamplePotentiometer(void *pvParam)
 {
-  int potValue = 0;
-  int8_t change = 0;
   for (;;)
   {
-    xQueueReceive(changeQueue, &change, portMAX_DELAY);
-    potValue += change;
-    potValue = constrain(potValue, LOW_TICKS, HIGH_TICKS);
-    int current_division_idx = map(potValue, LOW_TICKS, HIGH_TICKS, 0, 11);
+    int potValue = analogRead(POT_PIN);
+    int current_division_idx = map(potValue, 0, 1023, 0, 11);
     int new_division = division_values[current_division_idx];
-
-    activate_channel(CLOCK_DIV);
-
+    if (current_division == new_division)
+    {
+      same_value_count++;
+      if (same_value_count > 20)
+      {
+        activate_channel(BEAT);
+      }
+    }
+    else
+    {
+      same_value_count = 0;
+      activate_channel(CLOCK_DIV);
+    }
     if (current_division_idx >= 6)
     {
       display_bits(CLOCK_DIV,
@@ -67,49 +62,15 @@ void handleEncoder(void *pvParam)
                    current_division_idx <= 4,
                    current_division_idx <= 5);
     }
+    vTaskDelay(50 / portTICK_PERIOD_MS);
     current_division = new_division;
-
-    xTimerReset(restoreDisplayTimer, 0);
   }
-}
-
-void restoreDisplay(TimerHandle_t timer)
-{
-  activate_channel(BEAT);
-}
-
-void doEncoderA()
-{
-  enc_A_value = digitalRead(encoderPinA) == HIGH;
-  int8_t change = (enc_A_value == enc_B_value) ? +1 : -1;
-  xQueueSendToBackFromISR(changeQueue, &change, NULL);
-}
-
-void doEncoderB()
-{
-  enc_B_value = digitalRead(encoderPinB) == HIGH;
-  int8_t change = (enc_A_value != enc_B_value) ? +1 : -1;
-  xQueueSendToBackFromISR(changeQueue, &change, NULL);
 }
 
 void setup_divisions()
 {
-  changeQueue = xQueueCreate(5, sizeof(int8_t));
-
-  pinMode(encoderPinA, INPUT_PULLUP);
-  pinMode(encoderPinB, INPUT_PULLUP);
-
-  attachInterrupt(digitalPinToInterrupt(encoderPinA), doEncoderA, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(encoderPinB), doEncoderB, CHANGE);
-
-  restoreDisplayTimer = xTimerCreate("RestoreDisplay",
-                                     1000 / portTICK_PERIOD_MS,
-                                     false,
-                                     NULL,
-                                     restoreDisplay);
-
-  xTaskCreate(handleEncoder,
-              "HandleEncoder",
+  xTaskCreate(SamplePotentiometer,
+              "SamplePot",
               128,
               NULL,
               3,

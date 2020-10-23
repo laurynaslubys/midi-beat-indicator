@@ -7,6 +7,7 @@
 #include <division.hpp>
 #include <queue.h>
 #include <timers.h>
+#include <wiring.h>
 
 //https://www.midi.org/specifications-old/item/table-1-summary-of-midi-message
 #define MSG_CLOCK 0b11111000
@@ -14,8 +15,6 @@
 #define MSG_CONTINUE 0b11111011
 #define MSG_STOP 0b11111100
 #define MSG_SPP 0b11110010
-
-#define TRIG_PIN 7
 
 struct MidiMessage
 {
@@ -29,6 +28,7 @@ bool playing = false;
 
 QueueHandle_t midiQueue;
 TimerHandle_t endTriggerTimer;
+volatile int sync_pulses_remaining = 0;
 
 void endTrigger(TimerHandle_t timer)
 {
@@ -52,10 +52,11 @@ void trigger_current()
 {
   if (current_division > 0)
   {
-    if (song_pos % current_division == 0)
+    if (song_pos % current_division == 0 && sync_pulses_remaining > 0)
     {
       FastGPIO::Pin<TRIG_PIN>::setOutputValueHigh();
       xTimerReset(endTriggerTimer, 1000 / portTICK_PERIOD_MS);
+      sync_pulses_remaining--;
     }
   }
 }
@@ -122,6 +123,7 @@ void TaskRcvMidi(void *pvParameters)
     while (USBMIDI.available())
     {
       data = USBMIDI.read();
+      Serial1.write(data);
       bool is_command = data & 0b10000000;
 
       if (is_command)
@@ -165,8 +167,16 @@ void TaskRcvMidi(void *pvParameters)
   };
 }
 
+void onSyncButton()
+{
+  sync_pulses_remaining = 4;
+}
+
 void setup_midi()
 {
+  pinMode(SYNC_BUTTON_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(SYNC_BUTTON_PIN), onSyncButton, FALLING);
+
   midiQueue = xQueueCreate(16, sizeof(MidiMessage));
   endTriggerTimer = xTimerCreate("Stop trigger",
                                  50 / portTICK_PERIOD_MS,

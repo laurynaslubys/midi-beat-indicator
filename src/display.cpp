@@ -3,14 +3,7 @@
 #include <Arduino.h>
 #include <Arduino_FreeRTOS.h>
 #include <FastGPIO.h>
-
-#define LOW_1 8
-#define LOW_2 11
-#define LOW_3 13
-
-#define HIGH_1 9
-#define HIGH_2 10
-#define HIGH_3 12
+#include <wiring.h>
 
 struct DisplayValue // TODO store in one byte
 {
@@ -148,13 +141,12 @@ void Blink(void *pvParameters)
 
 void setup_display()
 {
-  pinMode(LOW_1, OUTPUT);
-  pinMode(LOW_2, OUTPUT);
-  pinMode(LOW_3, OUTPUT);
-
-  pinMode(HIGH_1, OUTPUT);
-  pinMode(HIGH_2, OUTPUT);
-  pinMode(HIGH_3, OUTPUT);
+  FastGPIO::Pin<LOW_1>::setOutput(LOW);
+  FastGPIO::Pin<LOW_2>::setOutput(LOW);
+  FastGPIO::Pin<LOW_3>::setOutput(LOW);
+  FastGPIO::Pin<HIGH_1>::setOutput(LOW);
+  FastGPIO::Pin<HIGH_2>::setOutput(LOW);
+  FastGPIO::Pin<HIGH_3>::setOutput(LOW);
 
   xTaskCreate(Blink,
               "Blink",

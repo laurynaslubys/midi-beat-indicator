@@ -7,6 +7,7 @@
 
 void setup()
 {
+  Serial1.begin(32500);
   delay(1000); // prevents usb driver crash on startup, do not omit this
 
   setup_display();
